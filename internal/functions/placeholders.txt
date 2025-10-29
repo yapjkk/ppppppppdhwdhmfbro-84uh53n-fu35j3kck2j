@@ -1,0 +1,424 @@
+# functions/placeholders.py
+import re
+import random
+import string
+import requests
+import base64
+import os
+import logging
+from datetime import datetime
+import pytz
+from functions.email_utils import generate_qr_code
+from faker import Faker
+# Utility functions moved inline
+from functions.fmswitch import get_next_sender_name, get_next_subject
+from functions.punnnycode import apply_punnnycode_smart
+
+faker = Faker()
+
+# Utility functions
+def mask_email(email: str) -> str:
+    """Mask part of an email address for privacy."""
+    username, domain = email.split("@")
+    masked_username = username[0] + "***" + username[-1]
+    return f"{masked_username}@{domain}"
+
+def generate_random_string(length: int, uppercase: bool = True) -> str:
+    """Generate a random string of specified length."""
+    chars = string.ascii_uppercase if uppercase else string.ascii_lowercase
+    return ''.join(random.choices(chars, k=length))
+
+def generate_mixed_case_string(length: int) -> str:
+    """Generate a random string with mixed upper and lower case letters."""
+    chars = string.ascii_letters  # Both upper and lower case
+    return ''.join(random.choices(chars, k=length))
+
+def generate_alphanumeric_string(length: int) -> str:
+    """Generate a random alphanumeric string (letters and numbers)."""
+    chars = string.ascii_letters + string.digits  # Letters + numbers
+    return ''.join(random.choices(chars, k=length))
+
+# Global counters for rotation
+_link_counter = 0
+_link_switch_counter = 0
+_current_link = None
+
+def reset_link_counter():
+    """Reset the link rotation counter to 0."""
+    global _link_counter, _link_switch_counter, _current_link
+    _link_counter = 0
+    _link_switch_counter = 0
+    _current_link = None
+
+def apply_encryption(text, encryption_type, intensity=0.7):
+    """
+    Apply encryption to text based on type
+    
+    Args:
+        text (str): Text to encrypt
+        encryption_type (str): Type of encryption ('punnnycode' or 'none')
+        intensity (float): Encryption intensity (0.0 - 1.0)
+    
+    Returns:
+        str: Encrypted text
+    """
+    if not text or encryption_type.lower() == 'none':
+        return text
+    
+    if encryption_type.lower() == 'punnnycode':
+        return apply_punnnycode_smart(text, intensity)
+    
+    return text
+
+def replace_placeholders(template: str, email: str, from_email: str, config: dict, sender_name: str = None, email_subject: str = None) -> str:
+    """Replace placeholders in the template with appropriate values."""
+    email_username, email_domain = email.split('@', 1)
+    favicon_url = f"https://icons.duckduckgo.com/ip3/{email_domain}.ico"
+    company_name = email_domain.split('.')[0].capitalize()
+    company_name_raw = email_domain.split('.')[0]
+
+    # 🔧 Check if favicon URL actually exists
+    try:
+        favicon_response = requests.head(favicon_url, timeout=3)
+        favicon_ok = favicon_response.status_code == 200
+    except Exception:
+        favicon_ok = False
+
+    # 🖼️ Image styling from config
+    logo_style = config.get("image_dress", {}).get("company_logo", {})
+    qrcode_style = config.get("image_dress", {}).get("qrcode", {})
+
+    logo_height = logo_style.get("height", "32px")
+    logo_width = logo_style.get("width", "32px")
+    qr_height = qrcode_style.get("height", "128px")
+    qr_width = qrcode_style.get("width", "128px")
+
+    # Define time zones with abbreviations
+    time_zones = {
+        'GMT': ('UTC', 'GMT'),
+        'UTC': ('UTC', 'UTC'),
+        'EST': ('America/New_York', 'EST'),
+        'PST': ('America/Los_Angeles', 'PST'),
+        'CST': ('America/Chicago', 'CST'),
+        'MST': ('America/Denver', 'MST'),
+        'IST': ('Asia/Kolkata', 'IST'),
+        'JST': ('Asia/Tokyo', 'JST'),
+        'AEST': ('Australia/Sydney', 'AEST'),
+        'BST': ('Europe/London', 'BST'),
+        'CET': ('Europe/Paris', 'CET'),
+        'MSK': ('Europe/Moscow', 'MSK')
+    }
+
+    # Get current time in GMT (UTC)
+    gmt_time = datetime.now(pytz.UTC)
+
+    # Define time formats (excluding TIME6, handled separately)
+    time_formats = {
+        'TIME1': '%I:%M %p',           # 12-hour format (e.g., 3:43 PM)
+        'TIME2': '%H:%M',             # 24-hour format (e.g., 15:43)
+        'TIME3': '%I:%M:%S %p',       # 12-hour format with seconds (e.g., 3:43:00 PM)
+        'TIME4': '%H:%M:%S',          # 24-hour format with seconds (e.g., 15:43:00)
+        'TIME5': '%Y-%m-%dT%H:%M:%SZ',# ISO 8601 format (e.g., 2025-08-06T15:43:00Z)
+        'TIME7': '%H%MZ',             # Military/NATO format (e.g., 1543Z)
+        'TIME8': '%I:%M %p',          # Written format base (e.g., 3:43 PM, appended with TZ later)
+        'TIME9': '%m/%d/%Y %H:%M',    # Short date and time (e.g., 08/06/2025 15:43)
+        'TIME10': '%B %d, %Y %H:%M:%S'# Long date and time (e.g., August 6, 2025 15:43:00)
+    }
+
+    # Define the image folder path (relative to the script or configurable)
+    image_folder = config.get("image_folder", "image")
+    logging.info(f"Image folder set to: {image_folder}")
+
+    # Initialize replacements dictionary
+    replacements = {
+        # === EMAIL & COMPANY DATA ===
+        "##EMAIL##": email,
+        "##EMAIL_BASE64##": base64.b64encode(email.encode()).decode(),
+        "##EMAIL_USERNAME##": email_username,
+        "##EMAIL_DOMAIN##": email_domain,
+        "##COMPANYNAME##": company_name,
+        "##COMPANY_NAME##": company_name_raw,
+        
+        # === PERSONAL DATA ===
+        "##FAKE_NAME##": faker.name(),
+        "##FAKE_PHONE##": faker.phone_number(),
+        "##FAKE_EMAIL##": faker.email(),
+        "##FAKE_SSN##": faker.ssn(),
+        "##FAKE_DOB##": faker.date_of_birth(minimum_age=18, maximum_age=80).strftime('%Y-%m-%d'),
+        "##FAKE_FIRST_NAME_MALE##": faker.first_name_male(),
+        "##FAKE_FIRST_NAME_FEMALE##": faker.first_name_female(),
+        "##FAKE_LAST_NAME##": faker.last_name(),
+        "##FAKE_FULL_NAME##": faker.name(),
+        "##FAKE_FULL_NAME_MALE##": f"{faker.first_name_male()} {faker.last_name()}",
+        "##FAKE_FULL_NAME_FEMALE##": f"{faker.first_name_female()} {faker.last_name()}",
+        
+        # === BUSINESS DATA ===
+        "##FAKE_COMPANY##": faker.company(),
+        "##FAKE_JOB_TITLE##": faker.job(),
+        "##FAKE_INDUSTRY##": faker.random_element(elements=('Technology', 'Healthcare', 'Finance', 'Education', 'Retail', 'Manufacturing', 'Real Estate', 'Consulting')),
+        "##FAKE_WEBSITE##": faker.url(),
+        "##FAKE_BUSINESS_EMAIL##": faker.company_email(),
+        
+        # === LOCATION DATA ===
+        "##FAKE_ADDRESS##": faker.address().replace('\n', ', '),
+        "##FAKE_STATE##": faker.state(),
+        "##FAKE_CITY##": faker.city(),
+        "##FAKE_ZIP##": faker.zipcode(),
+        "##FAKE_ZIPCODE##": faker.zipcode(),
+        "##FAKE_STREET_NAME##": faker.street_name(),
+        "##FAKE_STREET_ADDRESS##": faker.street_address(),
+        "##FAKE_FULL_ADDRESS##": faker.address().replace('\n', ', '),
+        "##FAKE_COUNTRY##": faker.country(),
+        "##FAKE_LATITUDE##": str(faker.latitude()),
+        "##FAKE_LONGITUDE##": str(faker.longitude()),
+        
+        # === TECHNOLOGY DATA ===
+        "##FAKE_IP##": faker.ipv4(network=False, private=False, address_class='c'),
+        "##FAKE_IPV6##": faker.ipv6(),
+        "##FAKE_MAC_ADDRESS##": faker.mac_address(),
+        "##FAKE_UA##": faker.user_agent(),
+        "##FAKE_BROWSER##": faker.random_element(elements=('Chrome', 'Firefox', 'Safari', 'Edge', 'Opera', 'Brave')),
+        "##FAKE_OS##": faker.random_element(elements=('Windows 11', 'macOS Ventura', 'Ubuntu 22.04', 'iOS 17', 'Android 14')),
+        
+        # === DEVICES (UPDATED WITH NEWER MODELS) ===
+        "##FAKE_DEVICE##": f"{faker.random_element(elements=('iPhone', 'iPad', 'iPod'))} {faker.random_element(elements=('13', '14', '15', '15 Pro', '15 Pro Max', '16', '16 Pro', '16 Pro Max'))}",
+        "##FAKE_MODEL##": faker.random_element(elements=('A2097', 'A2172', 'A2287', 'A2342', 'A2399', 'A2487', 'A2566', 'A2649')),
+        "##FAKE_VERSION##": faker.ios_platform_token(),
+        "##FAKE_IPHONE##": f"{faker.random_element(elements=('iPhone 15 Pro', 'iPhone 15', 'iPhone 15 Plus', 'iPhone 15 Pro Max', 'iPhone 16', 'iPhone 16 Plus', 'iPhone 16 Pro', 'iPhone 16 Pro Max', 'iPhone 14 Pro', 'iPhone 14', 'iPhone 13 Pro', 'iPhone 13'))}",
+        "##FAKE_IPAD##": f"{faker.random_element(elements=('iPad Pro 12.9-inch (6th generation)', 'iPad Pro 11-inch (4th generation)', 'iPad Air (5th generation)', 'iPad (10th generation)', 'iPad mini (6th generation)', 'iPad Pro 12.9-inch (5th generation)', 'iPad Pro 11-inch (3rd generation)'))}",
+        "##FAKE_MACBOOK##": f"{faker.random_element(elements=('MacBook Pro 16-inch M3', 'MacBook Pro 14-inch M3', 'MacBook Air 15-inch M2', 'MacBook Air 13-inch M2', 'MacBook Pro 16-inch M2', 'MacBook Pro 14-inch M2'))}",
+        "##FAKE_ANDROID##": f"{faker.random_element(elements=('Samsung Galaxy S24', 'Samsung Galaxy S24+', 'Samsung Galaxy S24 Ultra', 'Google Pixel 8', 'Google Pixel 8 Pro', 'OnePlus 12', 'Xiaomi 14', 'Samsung Galaxy S23', 'Samsung Galaxy S23+', 'Samsung Galaxy S23 Ultra', 'Google Pixel 7', 'Google Pixel 7 Pro', 'OnePlus 11'))}",
+        "##FAKE_WINDOWS##": f"Windows {faker.random_element(elements=('11 Pro', '11 Home', '10 Pro', '10 Home', '11 Enterprise', '10 Enterprise'))}",
+        "##FAKE_MACOS##": f"macOS {faker.random_element(elements=('Sonoma', 'Ventura', 'Monterey', 'Big Sur', 'Catalina'))}",
+        "##FAKE_IOS##": f"iOS {faker.random_element(elements=('17', '16', '15', '18'))}",
+        "##FAKE_ANDROID_VERSION##": f"Android {faker.random_element(elements=('14', '13', '12', '15'))}",
+        "##FAKE_DESKTOP##": faker.random_element(elements=('Windows 11 Pro', 'Windows 11 Home', 'macOS Sonoma', 'Ubuntu 22.04', 'Linux Mint 21')),
+        "##FAKE_MOBILE##": faker.random_element(elements=('iPhone 16 Pro', 'iPhone 15 Pro', 'Samsung Galaxy S24', 'Google Pixel 8', 'OnePlus 12')),
+        
+        # === FINANCIAL DATA ===
+        "##FAKE_CREDIT_CARD##": faker.credit_card_number(),
+        "##FAKE_CREDIT_CARD_TYPE##": faker.credit_card_provider(),
+        "##FAKE_BANK_ACCOUNT##": faker.iban(),
+        "##FAKE_CURRENCY##": faker.currency_code(),
+        "##FAKE_PRICE##": f"${faker.random_int(min=10, max=1000)}.{faker.random_int(min=10, max=99)}",
+        
+        # === TEXT & CONTENT ===
+        "##FAKE_TEXT##": faker.text(max_nb_chars=100),
+        "##FAKE_SENTENCE##": faker.sentence(),
+        "##FAKE_WORD##": faker.word(),
+        "##FAKE_COLOR##": faker.color_name(),
+        "##FAKE_HEX_COLOR##": faker.hex_color(),
+        
+        # === INTERNET & SOCIAL ===
+        "##FAKE_USERNAME##": faker.user_name(),
+        "##FAKE_DOMAIN##": faker.domain_name(),
+        "##FAKE_URL##": faker.url(),
+        "##FAKE_SOCIAL_MEDIA##": faker.random_element(elements=('Facebook', 'Twitter', 'Instagram', 'LinkedIn', 'TikTok', 'YouTube', 'Snapchat')),
+        # === ENHANCED DATES & TIMES ===
+        "##DATE1##": datetime.now().strftime("%Y-%m-%d"),  # ISO 8601: 2025-08-06
+        "##DATE2##": datetime.now().strftime("%d/%m/%Y"),  # European: 06/08/2025
+        "##DATE3##": datetime.now().strftime("%m/%d/%Y"),  # US: 08/06/2025
+        "##DATE4##": datetime.now().strftime("%B %d, %Y"),  # Formal: August 06, 2025
+        "##DATE5##": datetime.now().strftime("%A, %b %d"),  # Casual: Wednesday, Aug 06
+        "##DATE6##": datetime.now().strftime("%d %B %Y"),  # Long: 06 August 2025
+        "##DATE7##": datetime.now().strftime("%Y%m%d"),    # Compact: 20250806
+        "##DATE8##": datetime.now().strftime("%b %d, %y"),  # Short: Aug 06, 25
+        "##DATE9##": datetime.now().strftime("%A %d/%m"),   # Day-focused: Wednesday 06/08
+        "##DATE10##": datetime.now().strftime("%Y-%b-%d"),  # Mixed: 2025-Aug-06
+        "##FAKE_RANDOM_DATE##": faker.date_between(start_date='-1y', end_date='today').strftime('%Y-%m-%d'),
+        "##FAKE_FUTURE_DATE##": faker.future_date(end_date='+30d').strftime('%Y-%m-%d'),
+        "##FAKE_FUTURE_DATE2##": faker.future_date(end_date='+2d').strftime('%Y-%m-%d'),
+        "##FAKE_PAST_DATE##": faker.past_date(start_date='-30d').strftime('%Y-%m-%d'),
+        "##FAKE_PAST_DATE6##": faker.past_date(start_date='-6d').strftime('%Y-%m-%d'),
+        "##FAKE_TIME##": faker.time(),
+        "##FAKE_TIMEZONE##": faker.timezone(),
+        "##USERLOGO##": (
+            f'<img src="{favicon_url}" alt="Company Logo" height="{logo_height}" width="{logo_width}">'
+            if favicon_ok else ""
+        ),
+        "##RANDOMFROMEMAIL##": from_email,
+        "##RANDOMFROMNAME##": sender_name if sender_name is not None else get_next_sender_name(),
+        "##RANDOMSUBJECT##": email_subject if email_subject is not None else get_next_subject(),
+        "##LINK##": "",  # Will be filled after link processing
+        "##MASK_MAIL##": mask_email(email),
+        "##QRCODE##": ""  # Will be filled after QR code generation
+    }
+
+    # Add time placeholders for each time zone
+    for tz_prefix, (tz_name, tz_abbr) in time_zones.items():
+        tz = pytz.timezone(tz_name)
+        tz_time = gmt_time.astimezone(tz)
+        for time_key, time_format in time_formats.items():
+            placeholder = f"##{tz_prefix}-{time_key}##"
+            try:
+                formatted_time = tz_time.strftime(time_format)
+                if time_key == 'TIME8':
+                    # Append time zone abbreviation for TIME8
+                    formatted_time = f"{formatted_time} {tz_abbr}"
+                replacements[placeholder] = formatted_time
+            except ValueError as e:
+                print(f"Error formatting time for {placeholder}: {e}")
+                replacements[placeholder] = "Invalid time format"
+        # Handle TIME6 (Unix timestamp) separately
+        placeholder = f"##{tz_prefix}-TIME6##"
+        try:
+            formatted_time = str(int(tz_time.timestamp()))
+            replacements[placeholder] = formatted_time
+        except Exception as e:
+            print(f"Error formatting timestamp for {placeholder}: {e}")
+            replacements[placeholder] = "Invalid time format"
+        # Add non-prefixed TIME placeholders for GMT
+        if tz_prefix == 'GMT':
+            for time_key, time_format in time_formats.items():
+                try:
+                    formatted_time = tz_time.strftime(time_format)
+                    if time_key == 'TIME8':
+                        formatted_time = f"{formatted_time} GMT"
+                    replacements[f"##{time_key}##"] = formatted_time
+                except ValueError as e:
+                    print(f"Error formatting time for ##{time_key}##: {e}")
+                    replacements[f"##{time_key}##"] = "Invalid time format"
+            # Handle TIME6 for GMT
+            try:
+                replacements["##TIME6##"] = str(int(tz_time.timestamp()))
+            except Exception as e:
+                print(f"Error formatting timestamp for ##TIME6##: {e}")
+                replacements["##TIME6##"] = "Invalid time format"
+
+    # Process link with placeholders and rotation
+    global _link_counter, _link_switch_counter, _current_link
+    link_config = config.get("message", {}).get("link", "https://example.com")
+    
+    # Get link switching settings
+    link_settings = config.get("switch_settings", {}).get("link", {})
+    link_enabled = link_settings.get("enabled", True)
+    link_count = link_settings.get("count", 1)
+    
+    # Parse multiple links if comma-separated
+    if "," in link_config and link_enabled:
+        links = [link.strip() for link in link_config.split(",") if link.strip()]
+        if links:
+            # Only increment counter if this is the first call for this email (when processing HTML content)
+            # We can detect this by checking if the template contains ##LINK##
+            if "##LINK##" in template:
+                # This is the main call for link processing
+                if _link_switch_counter % link_count == 0:
+                    # Time to switch to next link
+                    selected_link = links[_link_counter % len(links)]
+                    _current_link = selected_link
+                    _link_counter += 1
+                else:
+                    # Use the same link as before
+                    selected_link = _current_link if _current_link else links[0]
+                _link_switch_counter += 1
+            else:
+                # This is a secondary call (for subject/sender), use current link
+                selected_link = _current_link if _current_link else links[0]
+        else:
+            selected_link = "https://example.com"
+    else:
+        selected_link = link_config
+    
+    # Apply other placeholder replacements to the selected link
+    for key, value in replacements.items():
+        if key not in ["##LINK##", "##QRCODE##"]:  # Avoid replacing ##LINK## or ##QRCODE##
+            selected_link = selected_link.replace(key, value)
+    replacements["##LINK##"] = selected_link
+
+    # Process qrcode_link with placeholders
+    qrcode_link = config.get("message", {}).get("qrcode_link", "https://default-qrcode.com")
+    for key, value in replacements.items():
+        if key not in ["##LINK##", "##QRCODE##"]:  # Avoid replacing ##LINK## or ##QRCODE##
+            qrcode_link = qrcode_link.replace(key, value)
+
+    # Generate QR code with resolved link
+    qr_code_base64 = generate_qr_code(qrcode_link)
+
+    # Update QRCODE replacement with the generated QR code
+    replacements["##QRCODE##"] = (
+        f'<img src="data:image/png;base64,{qr_code_base64}" '
+        f'alt="QR Code" height="{qr_height}" width="{qr_width}">'
+    )
+
+    # Dynamic pattern-based tags
+    pattern_map = {
+        r"##RANDOM_STRING_UPPER_(\d{1,3})##": lambda n: generate_random_string(int(n), True),
+        r"##RANDOM_STRING_LOWER_(\d{1,3})##": lambda n: generate_random_string(int(n), False),
+        r"##RANDOM_STRING_MIXED_(\d{1,3})##": lambda n: generate_mixed_case_string(int(n)),
+        r"##RANDOM_ALPHANUMERIC_(\d{1,3})##": lambda n: generate_alphanumeric_string(int(n)),
+        r"##RANDOM_NUMBER_(\d{1,3})##": lambda n: ''.join(random.choices(string.digits, k=int(n))),
+        r"##IMAGE_([^#]+)##": lambda img_name: os.path.join(image_folder, img_name),
+        
+        # Dynamic future dates with different formats (format number at front)
+        r"##1FAKE_FUTURE_DATE_(\d+)##": lambda n: faker.future_date(end_date=f'+{n}d').strftime('%Y-%m-%d'),  # ISO 8601
+        r"##2FAKE_FUTURE_DATE_(\d+)##": lambda n: faker.future_date(end_date=f'+{n}d').strftime('%d/%m/%Y'),  # European
+        r"##3FAKE_FUTURE_DATE_(\d+)##": lambda n: faker.future_date(end_date=f'+{n}d').strftime('%m/%d/%Y'),  # US
+        r"##4FAKE_FUTURE_DATE_(\d+)##": lambda n: faker.future_date(end_date=f'+{n}d').strftime('%B %d, %Y'),  # Formal
+        r"##5FAKE_FUTURE_DATE_(\d+)##": lambda n: faker.future_date(end_date=f'+{n}d').strftime('%A, %b %d'),  # Casual
+        r"##6FAKE_FUTURE_DATE_(\d+)##": lambda n: faker.future_date(end_date=f'+{n}d').strftime('%d %B %Y'),  # Long
+        r"##7FAKE_FUTURE_DATE_(\d+)##": lambda n: faker.future_date(end_date=f'+{n}d').strftime('%Y%m%d'),    # Compact
+        r"##8FAKE_FUTURE_DATE_(\d+)##": lambda n: faker.future_date(end_date=f'+{n}d').strftime('%b %d, %y'),  # Short
+        r"##9FAKE_FUTURE_DATE_(\d+)##": lambda n: faker.future_date(end_date=f'+{n}d').strftime('%A %d/%m'),   # Day-focused
+        r"##10FAKE_FUTURE_DATE_(\d+)##": lambda n: faker.future_date(end_date=f'+{n}d').strftime('%Y-%b-%d'),  # Mixed
+        
+        # Dynamic past dates with different formats (format number at front)
+        r"##1FAKE_PAST_DATE_(\d+)##": lambda n: faker.past_date(start_date=f'-{n}d').strftime('%Y-%m-%d'),  # ISO 8601
+        r"##2FAKE_PAST_DATE_(\d+)##": lambda n: faker.past_date(start_date=f'-{n}d').strftime('%d/%m/%Y'),  # European
+        r"##3FAKE_PAST_DATE_(\d+)##": lambda n: faker.past_date(start_date=f'-{n}d').strftime('%m/%d/%Y'),  # US
+        r"##4FAKE_PAST_DATE_(\d+)##": lambda n: faker.past_date(start_date=f'-{n}d').strftime('%B %d, %Y'),  # Formal
+        r"##5FAKE_PAST_DATE_(\d+)##": lambda n: faker.past_date(start_date=f'-{n}d').strftime('%A, %b %d'),  # Casual
+        r"##6FAKE_PAST_DATE_(\d+)##": lambda n: faker.past_date(start_date=f'-{n}d').strftime('%d %B %Y'),  # Long
+        r"##7FAKE_PAST_DATE_(\d+)##": lambda n: faker.past_date(start_date=f'-{n}d').strftime('%Y%m%d'),    # Compact
+        r"##8FAKE_PAST_DATE_(\d+)##": lambda n: faker.past_date(start_date=f'-{n}d').strftime('%b %d, %y'),  # Short
+        r"##9FAKE_PAST_DATE_(\d+)##": lambda n: faker.past_date(start_date=f'-{n}d').strftime('%A %d/%m'),   # Day-focused
+        r"##10FAKE_PAST_DATE_(\d+)##": lambda n: faker.past_date(start_date=f'-{n}d').strftime('%Y-%b-%d'),  # Mixed
+        
+        # Simple versions (default to format 1 - ISO)
+        r"##FAKE_FUTURE_DATE_(\d+)##": lambda n: faker.future_date(end_date=f'+{n}d').strftime('%Y-%m-%d'),
+        r"##FAKE_PAST_DATE_(\d+)##": lambda n: faker.past_date(start_date=f'-{n}d').strftime('%Y-%m-%d')
+    }
+
+    for pattern, gen_func in pattern_map.items():
+        for match in re.findall(pattern, template):
+            full_tag = f"##{pattern.split('(')[0][2:]}{match}##"
+            value = gen_func(match)
+            logging.info(f"Replacing {full_tag} with {value}")
+            if full_tag.startswith("##IMAGE_") and not os.path.exists(value):
+                logging.warning(f"Image file does not exist: {value}")
+            replacements[full_tag] = value
+
+    # Apply encryption to subject and sender name if configured
+    message_encode = config.get("message_encode", {})
+    subject_encryption = message_encode.get("subject_encryption", "none")
+    sender_name_encryption = message_encode.get("sender_name_encryption", "none")
+    
+    # Apply encryption to subject
+    if "##RANDOMSUBJECT##" in replacements:
+        original_subject = replacements["##RANDOMSUBJECT##"]
+        encrypted_subject = apply_encryption(original_subject, subject_encryption, intensity=0.7)
+        replacements["##RANDOMSUBJECT##"] = encrypted_subject
+        logging.info(f"Subject encryption: '{original_subject}' -> '{encrypted_subject}'")
+    
+    # Apply encryption to sender name
+    if "##RANDOMFROMNAME##" in replacements:
+        original_name = replacements["##RANDOMFROMNAME##"]
+        encrypted_name = apply_encryption(original_name, sender_name_encryption, intensity=0.7)
+        replacements["##RANDOMFROMNAME##"] = encrypted_name
+        logging.info(f"Sender name encryption: '{original_name}' -> '{encrypted_name}'")
+
+    # Handle DONTencrypt placeholders - these should be converted to invisible preview text
+    def process_dontencrypt(match):
+        text = match.group(1)
+        # Convert to invisible preview text that won't be encrypted
+        return f'<div style="font-size: 1px; color: #f3f3f3; line-height: 1px; font-family: Arial, sans-serif; max-height: 0px; max-width: 0px; opacity: 0; overflow: hidden; mso-hide: all;">{text}</div>'
+    
+    # Process DONTencrypt placeholders before other replacements
+    template = re.sub(r'##DONTencrypt\(([^)]+)\)##', process_dontencrypt, template)
+
+    # Log the template before and after replacement for debugging
+    logging.info(f"Template before replacements: {template}")
+    for key, value in replacements.items():
+        template = template.replace(key, value)
+    logging.info(f"Template after replacements: {template}")
+
+    return template

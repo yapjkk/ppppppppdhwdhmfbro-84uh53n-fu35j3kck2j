@@ -1,0 +1,176 @@
+"""
+Email logging system for tracking failed email sends.
+Logs are saved to LOGS directory with date-based filenames.
+"""
+
+import os
+from datetime import datetime
+from typing import Dict, Any, Optional
+
+def ensure_logs_directory():
+    """Ensure the LOGS directory exists."""
+    logs_dir = "LOGS"
+    if not os.path.exists(logs_dir):
+        os.makedirs(logs_dir)
+    return logs_dir
+
+def ensure_sent_emails_directory():
+    """Ensure the LOGS/sentemails directory exists."""
+    logs_dir = ensure_logs_directory()
+    sent_emails_dir = os.path.join(logs_dir, "sentemails")
+    if not os.path.exists(sent_emails_dir):
+        os.makedirs(sent_emails_dir)
+    return sent_emails_dir
+
+def get_log_filename():
+    """Get the log filename based on current date."""
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    return f"failed_emails_{date_str}.log"
+
+def log_failed_email(
+    email: str,
+    error_message: str,
+    smtp_section: str = None,
+    from_email: str = None,
+    sender_name: str = None,
+    email_subject: str = None,
+    attempt: int = None,
+    max_attempts: int = None,
+    additional_info: Dict[str, Any] = None
+):
+    """
+    Log a failed email send to the date-based log file.
+    Only saves the email address, not detailed information.
+    
+    Args:
+        email: The recipient email address that failed
+        error_message: The error message describing why it failed (not logged)
+        smtp_section: The SMTP server section used (not logged)
+        from_email: The sender email address (not logged)
+        sender_name: The sender name (not logged)
+        email_subject: The email subject (not logged)
+        attempt: The attempt number when it failed (not logged)
+        max_attempts: The maximum number of attempts (not logged)
+        additional_info: Any additional information to log (not logged)
+    """
+    try:
+        # Ensure logs directory exists
+        logs_dir = ensure_logs_directory()
+        log_file = os.path.join(logs_dir, get_log_filename())
+        
+        # Only log the email address
+        log_entry = f"{email}\n"
+        
+        # Write to log file
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(log_entry)
+            
+    except Exception as e:
+        print(f"❌ Error logging failed email: {e}")
+
+def get_sent_emails_filename():
+    """Get the sent emails filename based on current date."""
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    return f"sent_emails_{date_str}.log"
+
+def log_sent_email(
+    email: str,
+    smtp_section: str = None,
+    from_email: str = None,
+    sender_name: str = None,
+    email_subject: str = None,
+    attempt: int = None
+):
+    """
+    Log a successfully sent email to the sentemails folder.
+    Only saves the email address, not detailed information.
+    
+    Args:
+        email: The recipient email address that was sent successfully
+        smtp_section: The SMTP server section used (not logged)
+        from_email: The sender email address (not logged)
+        sender_name: The sender name (not logged)
+        email_subject: The email subject (not logged)
+        attempt: The attempt number when it succeeded (not logged)
+    """
+    try:
+        # Ensure sentemails directory exists
+        sent_emails_dir = ensure_sent_emails_directory()
+        log_file = os.path.join(sent_emails_dir, get_sent_emails_filename())
+        
+        # Only log the email address
+        log_entry = f"{email}\n"
+        
+        # Write to log file
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(log_entry)
+            
+    except Exception as e:
+        print(f"❌ Error logging sent email: {e}")
+
+def remove_email_from_emails_txt(email: str, emails_file_path: str):
+    """
+    Remove ONE instance of a successfully sent email from the emails.txt file.
+    Only removes the first occurrence to allow sequential processing.
+    
+    Args:
+        email: The email address to remove
+        emails_file_path: Path to the emails.txt file
+    """
+    try:
+        if not os.path.exists(emails_file_path):
+            return False
+            
+        # Read all emails
+        with open(emails_file_path, "r", encoding="utf-8") as f:
+            emails = f.readlines()
+        
+        # Find and remove only the FIRST occurrence (case-insensitive)
+        original_count = len(emails)
+        for i, line in enumerate(emails):
+            if line.strip().lower() == email.lower():
+                # Remove only this one instance
+                emails.pop(i)
+                break
+        
+        # Only write back if something was removed
+        if len(emails) < original_count:
+            with open(emails_file_path, "w", encoding="utf-8") as f:
+                f.writelines(emails)
+            return True
+        
+        return False
+        
+    except Exception as e:
+        print(f"❌ Error removing email from emails.txt: {e}")
+        return False
+
+def get_log_summary():
+    """Get a summary of today's log files."""
+    try:
+        logs_dir = ensure_logs_directory()
+        failed_log_file = os.path.join(logs_dir, get_log_filename())
+        
+        sent_emails_dir = ensure_sent_emails_directory()
+        sent_log_file = os.path.join(sent_emails_dir, get_sent_emails_filename())
+        
+        failed_count = 0
+        sent_count = 0
+        
+        if os.path.exists(failed_log_file):
+            with open(failed_log_file, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+                # Count non-empty lines (each line is an email address)
+                failed_count = len([line for line in lines if line.strip()])
+        
+        if os.path.exists(sent_log_file):
+            with open(sent_log_file, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+                # Count non-empty lines (each line is an email address)
+                sent_count = len([line for line in lines if line.strip()])
+        
+        return f"📊 Today's Email Log Summary:\n  ✅ Sent: {sent_count}\n  ❌ Failed: {failed_count}\n  📁 Failed log: {failed_log_file}\n  📁 Sent log: {sent_log_file}"
+        
+    except Exception as e:
+        return f"❌ Error reading log summary: {e}"
+

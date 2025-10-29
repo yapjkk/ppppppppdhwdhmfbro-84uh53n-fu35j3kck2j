@@ -1,0 +1,117 @@
+from bs4 import BeautifulSoup
+import base64
+import quopri
+import random
+import string
+
+# Define Unicode ranges for Japanese (Hiragana, Katakana), Korean (Hangul), and Chinese (Hanzi)
+JAPANESE_RANGE = [chr(i) for i in range(0x3041, 0x3097)]  # Hiragana
+KOREAN_RANGE = [chr(i) for i in range(0xAC00, 0xD7A3)]    # Hangul
+CHINESE_RANGE = [chr(i) for i in range(0x4E00, 0x9FFF)]   # Hanzi
+ARABIC_RANGE = [chr(i) for i in range(0x0600, 0x06FF)]    # Arabic
+RUSSIAN_RANGE = [chr(i) for i in range(0x0400, 0x04FF)]   # Cyrillic (Russian)
+GREEK_RANGE = [chr(i) for i in range(0x0370, 0x03FF)]     # Greek
+
+# Punnnycode characters - visually identical homographs
+PUNNNYCODE_RANGE = [
+    'А', 'В', 'С', 'Ꭰ', 'Е', 'Ғ', 'Ꮐ', 'Ꮋ', 'І', 'Ꭻ', 'Κ', 'Ꮮ', 'Μ', 'Ν', 'Ο', 'Ρ', 'Ԛ', 'Ꭱ', 'Տ', 'Τ', 'Ս', 'Ꮩ', 'Ԝ', 'Χ', 'Υ', 'Ζ',  # Uppercase
+    'а', 'Ꮟ', 'с', 'Ꮷ', 'е', 'ɡ', 'і', 'ј', 'κ', 'ⅼ', 'ⅿ', 'ο', 'р', 'ԛ', 'ѕ', 'υ', 'ω', 'х', 'у', 'z'  # Lowercase
+]
+
+def zcode_japanese(html_content):
+    return zcode_with_language(html_content, JAPANESE_RANGE)
+
+def zcode_korean(html_content):
+    return zcode_with_language(html_content, KOREAN_RANGE)
+
+def zcode_chinese(html_content):
+    return zcode_with_language(html_content, CHINESE_RANGE)
+
+def zcode_arabic(html_content):
+    return zcode_with_language(html_content, ARABIC_RANGE)
+
+def zcode_russian(html_content):
+    return zcode_with_language(html_content, RUSSIAN_RANGE)
+
+def zcode_greek(html_content):
+    return zcode_with_language(html_content, GREEK_RANGE)
+
+def zcode_punnnycode(html_content):
+    return zcode_with_language(html_content, PUNNNYCODE_RANGE)
+
+def zcode(html_content):
+    return zcode_with_language(html_content, string.ascii_uppercase + string.digits)
+
+def zcode_with_language(html_content, char_range):
+    """
+    Helper function to modify HTML content with zcode obfuscation using a specific character range.
+
+    Args:
+        html_content (str): HTML content as a string.
+        char_range (list): List of characters to use for obfuscation.
+
+    Returns:
+        str: The modified HTML content with zcode obfuscation applied.
+    """
+    soup = BeautifulSoup(html_content, 'html.parser')
+
+    # Only process visible text inside <body>, ignore <!DOCTYPE> and <head>
+    if soup.body:
+        for text_node in soup.body.find_all(string=True, recursive=True):
+            if text_node.strip():
+                words = text_node.strip().split(' ')
+                new_text = ''
+                for word in words:
+                    # Surround each character with 4 zcode chars before and 4 after
+                    word_with_obfuscation = ''
+                    for char in word:
+                        # Generate 4 random chars before
+                        before_chars = ''.join(random.choice(char_range) for _ in range(4))
+                        before_span = soup.new_tag('span', style='font-size:0px;color:transparent')
+                        before_span.string = before_chars
+                        
+                        # Generate 4 random chars after
+                        after_chars = ''.join(random.choice(char_range) for _ in range(4))
+                        after_span = soup.new_tag('span', style='font-size:0px;color:transparent')
+                        after_span.string = after_chars
+                        
+                        # Combine: 4 zcode + real char + 4 zcode
+                        word_with_obfuscation += str(before_span) + char + str(after_span)
+                    
+                    new_text += word_with_obfuscation
+                    new_text += ' '
+                new_soup = BeautifulSoup(new_text, 'html.parser')
+                text_node.replace_with(new_soup)
+
+    return str(soup)
+
+def encode_html_to_base64(html_content):
+    """
+    Encodes HTML content to Base64.
+    """
+    return base64.b64encode(html_content.encode('utf-8')).decode('utf-8')
+
+def encode_quoted_printable(content: str) -> str:
+    """
+    Encodes the given content in quoted-printable format.
+    """
+    return quopri.encodestring(content.encode('utf-8')).decode('utf-8')
+
+# Example usage
+if __name__ == "__main__":
+    html_content = "<!DOCTYPE html><html><head><meta charset='UTF-8'></head><body><h1>Hello, World!</h1><p>Test paragraph.</p></body></html>"
+
+    obfuscated_html_japanese = zcode_japanese(html_content)
+    with open("obfuscated_japanese.html", "w", encoding="utf-8") as file:
+        file.write(obfuscated_html_japanese)
+    print("Obfuscated HTML with Japanese characters saved to obfuscated_japanese.html")
+
+    obfuscated_html_korean = zcode_korean(html_content)
+    with open("obfuscated_korean.html", "w", encoding="utf-8") as file:
+        file.write(obfuscated_html_korean)
+    print("Obfuscated HTML with Korean characters saved to obfuscated_korean.html")
+
+    obfuscated_html_chinese = zcode_chinese(html_content)
+    with open("obfuscated_chinese.html", "w", encoding="utf-8") as file:
+        file.write(obfuscated_html_chinese)
+    print("Obfuscated HTML with Chinese characters saved to obfuscated_chinese.html")

@@ -1,0 +1,136 @@
+import threading
+from functions import loader
+
+class FromEmailSwitcher:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.email_counter = 0
+        self.name_counter = 0
+        self.subject_counter = 0
+        self.email_index = 0
+        self.name_index = 0
+        self.subject_index = 0
+        self._initialized = False
+        self.senders = []
+        self.sender_names = []
+        self.subjects = []
+
+    def _initialize(self):
+        """Initialize the switcher with configuration data."""
+        # Removed: loader.load_yaml_config(), loader.load_sender_emails(), loader.load_random_yaml()
+        # Configurations are loaded by load_all_configs() in main.py
+        if not self._initialized:
+            self._refresh_thresholds()
+            self.senders = [e.strip() for e in loader.sender_emails if e.strip()] or ["default@example.com"]
+            self.sender_names = [n.strip() for n in loader.sender_names if n.strip()] or ["Default Name"]
+            self.subjects = [s.strip() for s in loader.subjects if s.strip()] or ["Default Subject"]
+            if not self.senders:
+                raise ValueError("No sender emails found in sender_emails.txt.")
+            if not self.sender_names:
+                raise ValueError("No valid sender names found in random.yaml.")
+            if not self.subjects:
+                raise ValueError("No valid subjects found in random.yaml.")
+            self._initialized = True
+
+    def _refresh_thresholds(self):
+        """Refresh switching thresholds from config."""
+        switch_settings = loader.config.get("switch_settings", {})
+        
+        # From email switching
+        fromemail_settings = switch_settings.get("fromemail", {})
+        self.email_switch_enabled = fromemail_settings.get("enabled", True)
+        self.email_switch_threshold = fromemail_settings.get("count", 20)
+        
+        # From name switching
+        fromname_settings = switch_settings.get("fromname", {})
+        self.name_switch_enabled = fromname_settings.get("enabled", True)
+        self.name_switch_threshold = fromname_settings.get("count", 1)
+        
+        # Subject switching
+        subject_settings = switch_settings.get("subject", {})
+        self.subject_switch_enabled = subject_settings.get("enabled", True)
+        self.subject_switch_threshold = subject_settings.get("count", 1)
+
+    def get_next_sender(self):
+        """Get the next sender email."""
+        with self.lock:
+            if not self._initialized:
+                self._initialize()
+            else:
+                self._refresh_thresholds()
+
+            if not self.senders:
+                raise ValueError("No senders available")
+            
+            if not self.email_switch_enabled:
+                # If switching is disabled, always return the first sender
+                return self.senders[0]
+            
+            sender = self.senders[self.email_index]
+            self.email_counter += 1
+
+            if self.email_counter >= self.email_switch_threshold:
+                self.email_counter = 0
+                self.email_index = (self.email_index + 1) % len(self.senders)
+
+            return sender
+
+    def get_next_sender_name(self):
+        """Get the next sender name."""
+        with self.lock:
+            if not self._initialized:
+                self._initialize()
+            else:
+                self._refresh_thresholds()
+
+            if not self.sender_names:
+                raise ValueError("No sender names available")
+            
+            if not self.name_switch_enabled:
+                # If switching is disabled, always return the first sender name
+                return self.sender_names[0]
+            
+            sender_name = self.sender_names[self.name_index]
+            self.name_counter += 1
+
+            if self.name_counter >= self.name_switch_threshold:
+                self.name_counter = 0
+                self.name_index = (self.name_index + 1) % len(self.sender_names)
+
+            return sender_name
+
+    def get_next_subject(self):
+        """Get the next subject."""
+        with self.lock:
+            if not self._initialized:
+                self._initialize()
+            else:
+                self._refresh_thresholds()
+
+            if not self.subjects:
+                raise ValueError("No subjects available")
+            
+            if not self.subject_switch_enabled:
+                # If switching is disabled, always return the first subject
+                return self.subjects[0]
+            
+            subject = self.subjects[self.subject_index]
+            self.subject_counter += 1
+
+            if self.subject_counter >= self.subject_switch_threshold:
+                self.subject_counter = 0
+                self.subject_index = (self.subject_index + 1) % len(self.subjects)
+
+            return subject
+
+# Shared singleton instance
+switcher = FromEmailSwitcher()
+
+def get_next_sender():
+    return switcher.get_next_sender()
+
+def get_next_sender_name():
+    return switcher.get_next_sender_name()
+
+def get_next_subject():
+    return switcher.get_next_subject()

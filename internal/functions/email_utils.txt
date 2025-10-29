@@ -1,0 +1,76 @@
+import base64
+from email.header import Header
+import qrcode
+from io import BytesIO
+import pdfkit
+
+def encode_header(value, charset, encoding):
+    if encoding == "base64":
+        return str(Header(value, charset).encode("base64"))
+    elif encoding == "quoted_printable":
+        return str(Header(value, charset).encode("quoted-printable"))
+    elif encoding == "7bit":
+        return str(Header(value, charset).encode("7bit"))
+    elif encoding == "none" or not encoding:
+        return value  # Return as-is without encoding
+    else:
+        raise ValueError(f"Unsupported encoding type: {encoding}")
+
+def generate_qr_code(link):
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(link)
+    qr.make(fit=True)
+    img = qr.make_image(fill="black", back_color="white")
+    buffered = BytesIO()
+    img.save(buffered, format="PNG")
+    return base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+def convert_html_to_pdf(html_content: str, output_path: str):
+    pdfkit.from_string(html_content, output_path)
+
+def maybe_send_test_copy(count, test_email, email_data, send_logic):
+    """
+    Send a test email every 'count_send' interval — NOT if real recipient == test_email.
+    """
+    if not test_email:
+        return
+
+    interval = email_data.get("count_send", 0)
+    original_email = email_data.get("original_email")
+
+    if test_email == original_email:
+        return  # 🛑 Avoid resending to same email
+
+    if interval > 0 and count % interval == 0:
+        print(f"📩 Sending test copy to {test_email} (triggered at count {count})")
+        try:
+            # Import here to avoid circular imports
+            from functions import loader
+            from functions.fmswitch import get_next_sender_name, get_next_subject
+            
+            # Get sender name and subject for test email
+            sender_name = get_next_sender_name()
+            email_subject = get_next_subject()
+            
+            # Get config folder from environment
+            import os
+            config_folder = os.environ.get('FEXSENDER_SELECTED_FOLDER', 'configs/IONOS')
+            
+            send_logic(
+                smtp_section=email_data["smtp_section"],
+                email=test_email,
+                from_email=email_data["from_email"],
+                smtp_connection=email_data.get("smtp_connection"),
+                sender_name=sender_name,
+                email_subject=email_subject,
+                loader=loader,
+                config_folder=config_folder
+            )
+        except Exception as e:
+            print(f"❌ Test email failed: {e}")
+

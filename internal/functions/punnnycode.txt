@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""
+Punnnycode Encryption Module
+Converts normal text to Cyrillic homographs for email deliverability
+"""
+
+import random
+import re
+
+# Precise mapping of Latin characters to visually identical Unicode homographs
+# Only characters that look exactly like the original letters
+UNICODE_MAP = {
+    # Uppercase letters - only visually identical characters
+    'A': ['А'],  # Cyrillic A (looks identical)
+    'B': ['В'],  # Cyrillic B (looks identical)
+    'C': ['С'],  # Cyrillic C (looks identical)
+    'D': ['Ꭰ'],  # Cherokee D (looks identical)
+    'E': ['Е'],  # Cyrillic E (looks identical)
+    'F': ['Ғ'],  # Cyrillic F (looks identical)
+    'G': ['Ꮐ'],  # Cherokee G (looks identical)
+    'H': ['Ꮋ'],  # Cherokee H (looks identical)
+    'I': ['І'],  # Cyrillic I (looks identical)
+    'J': ['Ꭻ'],  # Cherokee J (looks identical)
+    'K': ['Κ'],  # Greek K (looks identical)
+    'L': ['Ꮮ'],  # Cherokee L (looks identical)
+    'M': ['Μ'],  # Greek M (looks identical)
+    'N': ['Ν'],  # Greek N (looks identical)
+    'O': ['Ο'],  # Greek O (looks identical)
+    'P': ['Ρ'],  # Greek P (looks identical)
+    'Q': ['Ԛ'],  # Cyrillic Q (looks identical)
+    'R': ['Ꭱ'],  # Cherokee R (looks identical)
+    'S': ['Տ'],  # Armenian S (looks identical)
+    'T': ['Τ'],  # Greek T (looks identical)
+    'U': ['Ս'],  # Armenian U (looks identical)
+    'V': ['Ꮩ'],  # Cherokee V (looks identical)
+    'W': ['Ԝ'],  # Cyrillic W (looks identical)
+    'X': ['Χ'],  # Greek X (looks identical)
+    'Y': ['Υ'],  # Greek Y (looks identical)
+    'Z': ['Ζ'],  # Greek Z (looks identical)
+    
+    # Lowercase letters - only visually identical characters
+    'a': ['а'],  # Cyrillic a (looks identical)
+    'b': ['Ꮟ'],  # Cherokee b (looks identical)
+    'c': ['с'],  # Cyrillic c (looks identical)
+    'd': ['Ꮷ'],  # Cherokee d (looks identical)
+    'e': ['е'],  # Cyrillic e (looks identical)
+    'f': ['f'],  # Keep original f
+    'g': ['ɡ'],  # Script g (looks identical)
+    'h': ['h'],  # Keep original h
+    'i': ['і'],  # Cyrillic i (looks identical)
+    'j': ['ј'],  # Cyrillic j (looks identical)
+    'k': ['κ'],  # Greek k (looks identical)
+    'l': ['ⅼ'],  # Roman numeral l (looks identical)
+    'm': ['ⅿ'],  # Roman numeral m (looks identical)
+    'n': ['n'],  # Keep original n
+    'o': ['ο'],  # Greek o (looks identical)
+    'p': ['р'],  # Cyrillic p (looks identical)
+    'q': ['ԛ'],  # Cyrillic q (looks identical)
+    'r': ['r'],  # Keep original r
+    's': ['ѕ'],  # Cyrillic s (looks identical)
+    't': ['t'],  # Keep original t
+    'u': ['υ'],  # Greek u (looks identical)
+    'v': ['v'],  # Keep original v
+    'w': ['ω'],  # Greek w (looks identical)
+    'x': ['х'],  # Cyrillic x (looks identical)
+    'y': ['у'],  # Cyrillic y (looks identical)
+    'z': ['z'],  # Keep original z
+}
+
+# Additional special characters for more variety
+SPECIAL_CHARS = {
+    '!': '！',  # Fullwidth exclamation mark
+    '?': '？',  # Fullwidth question mark
+    '.': '．',  # Fullwidth full stop
+    ',': '，',  # Fullwidth comma
+    ':': '：',  # Fullwidth colon
+    ';': '；',  # Fullwidth semicolon
+    '(': '（',  # Fullwidth left parenthesis
+    ')': '）',  # Fullwidth right parenthesis
+    '[': '［',  # Fullwidth left square bracket
+    ']': '］',  # Fullwidth right square bracket
+    '{': '｛',  # Fullwidth left curly bracket
+    '}': '｝',  # Fullwidth right curly bracket
+    '-': '－',  # Fullwidth hyphen-minus
+    '_': '＿',  # Fullwidth low line
+    '=': '＝',  # Fullwidth equals sign
+    '+': '＋',  # Fullwidth plus sign
+    '*': '＊',  # Fullwidth asterisk
+    '#': '＃',  # Fullwidth number sign
+    '@': '＠',  # Fullwidth commercial at
+    '$': '＄',  # Fullwidth dollar sign
+    '%': '％',  # Fullwidth percent sign
+    '&': '＆',  # Fullwidth ampersand
+    '|': '｜',  # Fullwidth vertical line
+    '\\': '＼',  # Fullwidth reverse solidus
+    '/': '／',  # Fullwidth solidus
+    '<': '＜',  # Fullwidth less-than sign
+    '>': '＞',  # Fullwidth greater-than sign
+    '^': '＾',  # Fullwidth circumflex accent
+    '~': '～',  # Fullwidth tilde
+    '`': '｀',  # Fullwidth grave accent
+}
+
+def apply_punnnycode(text, intensity=0.7):
+    """
+    Convert normal text to Unicode homographs with specified intensity
+    
+    Args:
+        text (str): Input text to convert
+        intensity (float): Conversion intensity (0.0 = no conversion, 1.0 = full conversion)
+    
+    Returns:
+        str: Text with Unicode homographs applied
+    """
+    if not text or intensity <= 0:
+        return text
+    
+    result = []
+    
+    for char in text:
+        # Skip if character should not be converted
+        if random.random() > intensity:
+            result.append(char)
+            continue
+            
+        # Check for special characters first
+        if char in SPECIAL_CHARS:
+            result.append(SPECIAL_CHARS[char])
+        # Check for Unicode mapping
+        elif char in UNICODE_MAP:
+            # Randomly select from available homographs
+            homographs = UNICODE_MAP[char]
+            selected_char = random.choice(homographs)
+            result.append(selected_char)
+        # Keep original character if no mapping exists
+        else:
+            result.append(char)
+    
+    return ''.join(result)
+
+def apply_punnnycode_smart(text, intensity=0.6):
+    """
+    Smart punnnycode conversion that preserves readability
+    
+    Args:
+        text (str): Input text to convert
+        intensity (float): Conversion intensity (0.0 = no conversion, 1.0 = full conversion)
+    
+    Returns:
+        str: Text with smart Cyrillic homographs applied
+    """
+    if not text or intensity <= 0:
+        return text
+    
+    # Split text into words
+    words = re.findall(r'\S+|\s+', text)
+    result = []
+    
+    for word in words:
+        # Skip whitespace
+        if word.isspace():
+            result.append(word)
+            continue
+            
+        # Apply conversion to word
+        converted_word = apply_punnnycode(word, intensity)
+        result.append(converted_word)
+    
+    return ''.join(result)
+
+def test_punnnycode():
+    """Test the punnnycode conversion"""
+    test_texts = [
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        "abcdefghijklmnopqrstuvwxyz",
+        "Important Message SRC",
+        "Customer Service",
+        "Account Verification Required",
+        "Urgent Action Required",
+        "Please Check Your Account",
+        "Security Alert",
+        "Payment Confirmation",
+        "Account Suspended",
+        "Verify Your Identity",
+        "Update Required"
+    ]
+    
+    print("🧪 Enhanced Punnnycode Conversion Test")
+    print("=" * 60)
+    
+    for text in test_texts:
+        converted = apply_punnnycode_smart(text, intensity=0.8)
+        print(f"Original:  {text}")
+        print(f"Converted: {converted}")
+        print("-" * 40)
+    
+    print("\n🎯 Enhanced Features:")
+    print("  • Comprehensive Unicode homograph mapping")
+    print("  • Multiple character sets: Cyrillic, Greek, Armenian, Cherokee")
+    print("  • Random character selection for maximum variation")
+    print("  • Preserves readability while evading filters")
+    print("  • Configurable intensity (0.0 - 1.0)")
+    print("  • Smart word-based conversion")
+    print("  • Special character support")
+    print("  • Multiple variations per character")
+
+if __name__ == "__main__":
+    test_punnnycode()
